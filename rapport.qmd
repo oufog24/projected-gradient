@@ -1,0 +1,67 @@
+---
+title: "Rapport de laboratoire 6"
+subtitle: "MTH8408"
+author:
+  - name: Votre nom
+    email: votre.adresse@polymtl.ca
+    affiliation:
+      - name: Polytechnique Montréal
+format:
+  pdf:
+    keep-tex: false
+    documentclass: article
+    include-in-header:
+      - text: |
+            \usepackage{eulervm}
+            \usepackage{xspace}
+            \usepackage[francais]{babel}
+    geometry:
+      - margin=1in
+    papersize: letter
+    colorlinks: true
+    urlcolor: blue
+engine: julia
+---
+
+```{julia}
+#| output: false
+VERSION == v"1.11.5" || error("please use julia version 1.11.5")
+using Pkg
+Pkg.activate("labo11_env")
+```
+
+# Question 1
+
+Implémenter la condition d'Armijo modifiée et la méthode du gradient projeté tel que demandé dans le laboratoire.
+Votre implémentation doit accepter des contraintes définies par un ensemble "simple" $C$.
+
+```{julia}
+# votre code ici
+```
+
+# Question 2
+
+Tester votre implémentation et comparer la solution finale à celle de IPOPT sur 3 problèmes tirés de `OptimizationProblems`.
+
+```{julia}
+# votre code ici
+```
+
+# Questions 3
+
+Implémenter une structure et la fonction de projection pour une boule euclidienne.
+
+```{julia}
+# votre code ici
+```
+
+# Question 4
+
+Minimiser une quadratique non convexe à $n = 10$ variables sur une boule euclidienne centrée à l'origine à la manière d'un sous-problème de région de confiance.
+Votre solution pourrait-elle être utilisée pour calculer un pas dans une méthode de région de confiance ?
+Expliquer.
+
+```{julia}
+# votre code ici
+```
+
