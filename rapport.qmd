@@ -2,8 +2,8 @@
 title: "Rapport de laboratoire 6"
 subtitle: "MTH8408"
 author:
-  - name: Votre nom
-    email: votre.adresse@polymtl.ca
+  - name: Chris David Fogué
+    email: ouepiya-chris-david.fogue@etud.polymtl.ca
     affiliation:
       - name: Polytechnique Montréal
 format:
@@ -28,6 +28,10 @@ engine: julia
 VERSION == v"1.11.5" || error("please use julia version 1.11.5")
 using Pkg
 Pkg.activate("labo11_env")
+Pkg.add("LinearAlgebra")
+Pkg.add(["ADNLPModels", "OptimizationProblems", "NLPModels"])
+using NLPModels, LinearAlgebra, ADNLPModels, OptimizationProblems
+
 ```
 
 # Question 1
@@ -37,6 +41,145 @@ Votre implémentation doit accepter des contraintes définies par un ensemble "s
 
 ```{julia}
 # votre code ici
+
+"""
+Champs
+- `ℓ::V` : vecteur des bornes inférieures.
+- `u::V` : vecteur des bornes supérieures.
+
+Paramètres
+- `V <: AbstractVector` : type du vecteur.
+"""
+
+abstract type AbstractSimpleSet end
+
+# Structure pour les contraintes de bornes
+mutable struct SimpleBounds{V} <: AbstractSimpleSet where V <: AbstractVector
+    ℓ::V 
+    u::V
+end
+
+
+
+# Projection sur les bornes
+
+"""
+Projette le vecteur `x` sur les bornes définies par `C`.
+
+Arguments
+- `x::V` : vecteur à projeter.
+- `C::SimpleBounds{V}` : ensemble des bornes.
+
+Retour
+- `x` : le vecteur projeté.
+"""
+function projection!(x::V, C::SimpleBounds{V}) where V <: AbstractVector
+    x .= min.(max.(x, C.ℓ), C.u)
+    return x
+end
+
+
+
+# Condition d'Armijo modifiée
+"""
+Implémente une recherche linéaire avec la condition d'Armijo modifiée,
+adaptée aux contraintes de type `AbstractSimpleSet`.
+
+Arguments
+- `f` : fonction objectif.
+- `gradf` : fonction retournant le gradient de `f`.
+- `x::V` : point courant.
+- `C::AbstractSimpleSet` : ensemble des contraintes.
+- `alpha` : paramètre de tolérance Armijo.
+- `beta` : facteur de réduction du pas.
+
+Retour
+- `(t, xt)` : pas trouvé `t` et nouveau point projeté `xt`.
+"""
+function armijo(f, gradf, x::V, C::AbstractSimpleSet, alpha=1e-4, beta=0.5) where V
+    t = 1.0
+    xt = similar(x)
+    f_x = f(x)
+    gradf_x = gradf(x)
+    
+    while true
+        xt .= x - t * gradf_x
+        projection!(xt, C)
+        diff = x - xt
+        norm_diff_sq = dot(diff, diff)
+        
+        if f(xt) ≤ f_x - alpha * norm_diff_sq / t
+            return t, xt
+        end
+        
+        t *= beta
+        if t < 1e-10
+            return t, xt
+        end
+    end
+end
+
+
+# Méthode du gradient projeté
+"""
+Implémente la méthode du gradient projeté avec recherche linéaire Armijo.
+
+Arguments
+- `f` : fonction objectif.
+- `gradf` : fonction retournant le gradient de `f`.
+- `x0::V` : point initial.
+- `C::AbstractSimpleSet` : ensemble des contraintes.
+- `max_iter` : nombre maximal d'itérations (défaut `1000`).
+- `epsilon` : tolérance sur la convergence (défaut `1e-6`).
+- `alpha` : paramètre Armijo (défaut `1e-4`).
+- `beta` : facteur de réduction du pas (défaut `0.5`).
+
+Retour
+Un `NamedTuple` contenant :
+- `x` : solution trouvée.
+- `f_x` : valeur de `f` en `x`.
+- `converged` : booléen indiquant la convergence.
+- `iterations` : nombre d'itérations effectuées.
+"""
+function projected_gradient(f, gradf, x0::V, C::AbstractSimpleSet; 
+                          max_iter=1000, epsilon=1e-6, alpha=1e-4, beta=0.5) where V
+    
+    x = copy(x0)
+    x_prev = similar(x)
+    iter = 0
+    conv = false
+    
+    println("\nItération\tf(x)\t\t||x - x_prev||")
+    println("----------------------------------------")
+    
+    while iter < max_iter
+        x_prev .= x
+        t, x = armijo(f, gradf, x, C, alpha, beta)
+        
+        diff = norm(x - x_prev, Inf)
+        if iter % 10 == 0  
+            println("$iter\t\t$(round(f(x), digits=6))\t$(round(diff, digits=6))")
+        end
+        
+        if diff < epsilon
+            conv = true
+            break
+        end
+        
+        iter += 1
+    end
+    
+    return (x=x, f_x=f(x), converged=conv, iterations=iter)
+end
+
+
+# Fonction pour créer SimpleBounds à partir d'un modèle
+function SimpleBounds(model::AbstractNLPModel{T,V}) where {T,V}
+    ℓ = model.meta.lvar
+    u = model.meta.uvar
+    SimpleBounds{V}(ℓ, u)
+end
+
 ```
 
 # Question 2
@@ -45,6 +188,54 @@ Tester votre implémentation et comparer la solution finale à celle de IPOPT su
 
 ```{julia}
 # votre code ici
+
+# ====================== Problèmes tirés de OptimizationProblems ======================
+
+function hs5_test()
+    # Problème HS5 avec bornes [0, Inf]
+    f(x) = sin(x[1] + x[2])^2 + (x[1] - x[2])^2 - 1.5*x[1] + 2.5*x[2] + 1.0
+    gradf(x) = [2*cos(x[1]+x[2])*sin(x[1]+x[2]) + 2*(x[1]-x[2]) - 1.5,
+             2*cos(x[1]+x[2])*sin(x[1]+x[2]) - 2*(x[1]-x[2]) + 2.5]
+    x0 = [0.0, 0.0]
+    C = SimpleBounds([0.0, 0.0], [Inf, Inf])
+    return (f=f, gradf=gradf, x0=x0, C=C, name="HS5 (x ≥ 0)")
+end
+
+function hs25_test()
+    # Problème HS25 avec bornes [0.1, 10]
+    f(x) = (x[1] - x[2])^2 + (x[1] + x[2] - 10.0)^2/9.0 + (x[3] - 5.0)^2
+    gradf(x) = [2*(x[1]-x[2]) + 2*(x[1]+x[2]-10)/9,
+             -2*(x[1]-x[2]) + 2*(x[1]+x[2]-10)/9,
+             2*(x[3]-5.0)]
+    x0 = [100.0, 12.5, 3.0]
+    C = SimpleBounds([0.1, 0.1, 0.1], [10.0, 10.0, 10.0])
+    return (f=f, gradf=gradf, x0=x0, C=C, name="HS25 (0.1 ≤ x ≤ 10)")
+end
+
+function bt1_test()
+    # Problème BT1 avec bornes [0, 1]
+    f(x) = 100*(x[2]-x[1]^2)^2 + (1-x[1])^2
+    gradf(x) = [-400*x[1]*(x[2]-x[1]^2) - 2*(1-x[1]),
+             200*(x[2]-x[1]^2)]
+    x0 = [-1.2, 1.0]
+    C = SimpleBounds([0.0, 0.0], [1.0, 1.0])  # x ∈ [0,1]²
+    return (f=f, gradf=gradf, x0=x0, C=C, name="BT1 (Rosenbrock contraint)")
+end
+
+
+problems = [hs5_test(), hs25_test(), bt1_test()]
+
+for prob in problems
+    println("\n=== Résolution du problème $(prob.name) ===")
+    result = projected_gradient(prob.f, prob.gradf, prob.x0, prob.C)
+    
+    println("\nRésultats:")
+    println("f(x*) = ", result.f_x)
+    println("Convergé: ", result.converged)
+    println("Itérations: ", result.iterations)
+    println("Solution x*: ", round.(result.x, digits=5))
+end
+
 ```
 
 # Questions 3
@@ -53,6 +244,36 @@ Implémenter une structure et la fonction de projection pour une boule euclidien
 
 ```{julia}
 # votre code ici
+
+"""
+Représente une boule euclidienne dans l'espace vectoriel.
+
+Champs
+- `center::V` : centre de la boule.
+- `radius::T` : rayon de la boule (valeur positive).
+
+Paramètres de type
+- `T` : type scalaire du rayon (e.g. `Float64`).
+- `V <: AbstractVector` : type du vecteur pour le centre et les points.
+
+"""
+
+mutable struct EuclideanBall{T,V} <: AbstractSimpleSet
+    center::V
+    radius::T
+end
+
+function projection!(x::V, B::EuclideanBall{T,V}) where {T,V}
+    diff = x - B.center
+    norm_diff = norm(diff)
+    
+    if norm_diff > B.radius
+        x .= B.center + (diff / norm_diff) * B.radius
+    end
+    
+    return x
+end
+
 ```
 
 # Question 4
@@ -63,5 +284,80 @@ Expliquer.
 
 ```{julia}
 # votre code ici
+
+function quadratic_example()
+    n = 10
+    Q = randn(n, n)
+    Q = Q' * Q 
+    q = randn(n)
+    c = 0.0
+    
+    f(x) = 0.5 * dot(x, Q * x) + dot(q, x) + c
+    grad_f(x) = Q * x + q
+    
+    # Boule euclidienne de rayon 2 centrée à l'origine
+    B = EuclideanBall(zeros(n), 2.0)
+    x0 = randn(n)
+    projection!(x0, B)
+    
+    # Résolution
+    result = projected_gradient(f, grad_f, x0, B)
+    
+    println("\nRésultats pour la quadratique:")
+    println("  f(x*) = $(result.f_x)")
+    println("  Convergé: $(result.converged)")
+    println("  Itérations: $(result.iterations)")
+    println("Solution x*: ", round.(result.x, digits=5))
+end
+
+quadratic_example()
+
 ```
 
+
+#  Analyse pour les méthodes de région de confiance:
+## Comparaison entre GCT et Gradient Projeté
+
+
+La projection d'un point $x$ sur une boule euclidienne de centre $c$ et de rayon $r$ consiste à trouver le point admissible le plus proche. Si $x$ est déjà dans la boule ($\|x - c\| \leq r$), il reste inchangé. Sinon, il est projeté sur la surface via :
+La projection \( P_C(x) \) sur la boule de centre \( c \) et de rayon \( r \) est définie par :
+
+$$
+P_C(x) =
+\begin{cases} 
+x & \text{si } \|x - c\| \leq r, \\
+c + r \cdot \frac{x - c}{\|x - c\|} & \text{sinon.}
+\end{cases}
+$$
+
+## Sous-problème de région de confiance
+
+Dans le cadre d’un sous-problème de région de confiance, on cherche à minimiser une approximation quadratique :
+
+$$
+m(x) = f(x_k) + \nabla f(x_k)^\mathsf{T} x + \frac{1}{2} x^\mathsf{T} B_k x
+$$
+
+sous la contrainte :
+
+$$
+\|x\| \leq \Delta
+$$
+
+où :
+où :
+- $x_k$ est le point courant dans $\mathbb{R}^n$
+- $\nabla f(x_k)$ est le gradient de $f$ au point $x_k$
+- $B_k$ est une approximation symétrique du Hessien (matrice $n \times n$)
+- $\Delta > 0$ est le rayon de confiance
+- $\|\cdot\|$ désigne la norme euclidienne
+
+
+Traditionnellement, les problèmes de région de confiance sont résolus par des méthodes comme le **gradient conjugué tronqué**, qui utilisent la structure quadratique.  
+Cependant, notre approche par le **gradient projeté** offre plusieurs avantages :
+
+- Contrairement au GCT, elle ne nécessite pas que \( B_k \) soit définie positive.
+- La solution x* satisfait toujours \( \| x^{*} \| \leq \Delta \).
+- L’implémentation est facilement adaptable.
+
+Cependant, le gradient projeté peut converger moins vite pour les problèmes convexes, car il ne tire pas pleinement parti de la structure quadratique comme le gradient conjugué tronqué.
